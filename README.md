@@ -6,13 +6,13 @@ UPGRADED VERSION
 
 Production-ready **face verification engine** with a Streamlit dashboard powered by **InsightFace**, **MediaPipe**, and an adaptive quality-aware decision core.[web:64][file:43]
 
-> Core verification logic lives in `verify_v6.py v6.2` and is used unchanged by the Streamlit UI in `app.py`.[file:43]
+> Core verification logic lives in `verify_v6.py v6.2` and is used unchanged by the Streamlit UI in `app.py`.
 
 ---
 
 ## 🚀 Features
 
-- **Neural Face Embeddings** using InsightFace `buffalo_l` (CPU).[web:64][file:43]  
+- **Neural Face Embeddings** using InsightFace `buffalo_l` (CPU).
 - **Adaptive Thresholding** with quality and geometry-aware adjustments (no hard-coded fixed threshold).[file:43]  
 - **Image Quality Engine**: blur, brightness, contrast, resolution and composite score out of 100.[file:43]  
 - **Geometry Similarity** via MediaPipe FaceMesh (eye distance, ratios, symmetry, aspect).[web:66][file:43]  
@@ -34,10 +34,6 @@ app.py
 └─ Streamlit dashboard that calls UltimateVerifier.verify()
 and visualizes similarity, quality, geometry & verdict
 
-text
-[file:43][web:64]
-
----
 
 ## 🛠️ Local Setup
 
@@ -61,9 +57,6 @@ opencv-python-headless
 mediapipe
 numpy
 
-text
-[web:64][web:83][file:43]
-
 ---
 
 ## ▶️ Run the Streamlit App
@@ -74,7 +67,7 @@ streamlit run app.py
 
 text
 
-Then open: http://localhost:8501 in your browser.[web:69]
+Then open: http://localhost:8501 in your browser.
 
 **UI workflow:**
 
@@ -98,8 +91,6 @@ Options:
 python3 verify_v6.py img1.jpg img2.jpg --json
 python3 verify_v6.py img1.jpg img2.jpg --quiet
 
-text
-[file:43]
 
 Exit codes:
 
