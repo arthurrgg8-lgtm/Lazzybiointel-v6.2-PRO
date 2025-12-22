@@ -1,0 +1,15 @@
+cd ~
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+
+
+--Required Packages--
+pip install \
+  insightface==0.7.3 \
+  onnxruntime \
+  opencv-python-headless \
+  mediapipe \
+  numpy \
+  streamlit
+
