@@ -1,6 +1,6 @@
 # Lazzybiointel-v6.2-PRO
-UPGRADED VERSION 
-
+AI based Forensic tool to compare suspects face structure. [UPRADED]
+Specailly For LawEnforcement Agencies
 
 # 🌟 LazzyBioIntel v6.2 PRO
 
