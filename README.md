@@ -44,8 +44,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 
-text
-[web:70]
 
 ### 2. Install dependencies
 
