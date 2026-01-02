@@ -3,16 +3,12 @@
 ULTIMATE FACE VERIFICATION v6.2
 Enhanced Professional Edition
 
-CORE ALGORITHM 100% UNCHANGED FROM v6.1
-Only robustness and output improvements added
 """
-
 import os
 import sys
 import time
 import json
-import logging
-from pathlib import Path
+import logging 
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -20,6 +16,8 @@ import cv2
 import numpy as np
 import mediapipe as mp
 from insightface.app import FaceAnalysis
+
+from lz_validators import validate_image_file   
 
 # =============================================================================
 # Configuration
@@ -48,20 +46,47 @@ class Config:
     JSON_OUTPUT = False
     VERBOSE = True
 
+
 # =============================================================================
 # Logging
 # =============================================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("face_verification.log"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
+from logger import LogManager
+logger = LogManager.get_logger(__name__)
 
-logger = logging.getLogger(__name__)
+import random  # <-- required for jitter
+
+def _retry(op_name, fn, tries=3, base_delay=0.25):
+    last = None
+    for attempt in range(1, tries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            logger.warning(
+                f"{op_name} failed (attempt {attempt}/{tries})",
+                extra={"op": op_name, "attempt": attempt, "tries": tries},
+                exc_info=True,
+            )
+            if attempt < tries:
+                time.sleep(base_delay * (2 ** (attempt - 1)) + random.uniform(0,
+0.05))
+    raise last
+
+# =============================================================================
+# Phase 1: Dependency Check (Fail fast, no algorithm change)
+# =============================================================================
+
+def check_dependencies() -> None:
+    if not hasattr(mp, "solutions") or not hasattr(mp.solutions, "face_mesh"):
+        raise RuntimeError(
+            "MediaPipe API mismatch: mp.solutions.face_mesh missing. "
+            "Use Python 3.11 venv and mediapipe==0.10.14."
+        )
+    logger.info("Dependencies validated: MediaPipe solutions OK")
+
+check_dependencies()
+
 
 # =============================================================================
 # Data Classes
@@ -77,6 +102,7 @@ class ImageQuality:
     valid: bool = True
     error: Optional[str] = None
 
+
 @dataclass
 class VerificationResult:
     verdict: str
@@ -88,6 +114,7 @@ class VerificationResult:
     q1: ImageQuality
     q2: ImageQuality
     error: Optional[str] = None
+
 
 # =============================================================================
 # Image Quality Analyzer
@@ -120,11 +147,11 @@ class ImageQualityAnalyzer:
             res_s = min(100, (w * h) / 10000)
 
             score = (
-                Config.BLUR_WEIGHT * blur_s +
-                Config.BRIGHTNESS_WEIGHT * bright_s +
-                Config.CONTRAST_WEIGHT * cont_s +
-                Config.RESOLUTION_WEIGHT * res_s
-            )
+                Config.BLUR_WEIGHT * blur_s
+                + Config.BRIGHTNESS_WEIGHT * bright_s
+                + Config.CONTRAST_WEIGHT * cont_s
+                + Config.RESOLUTION_WEIGHT * res_s
+           )
 
             return ImageQuality(
                 round(blur_s, 1),
@@ -137,8 +164,9 @@ class ImageQualityAnalyzer:
             )
 
         except Exception as e:
-            logger.exception("Quality analysis failed")
+            logger.error("Quality analysis failed", exc_info=True)
             return ImageQuality(0, 0, 0, (0, 0), 0, False, str(e))
+
 
 # =============================================================================
 # Geometry
@@ -175,7 +203,7 @@ class Geometry:
             rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
             mesh = Geometry.get_mesh()
-            res = mesh.process(rgb)
+            res = _retry("mediapipe.mesh.process", lambda: mesh.process(rgb), tries=2)
 
             if not res.multi_face_landmarks:
                 return None
@@ -198,8 +226,9 @@ class Geometry:
             return np.array([eye_dist, ratio, wh, symmetry])
 
         except Exception:
-            logger.exception("Geometry extraction failed")
+            logger.error("Geometry extraction failed", exc_info=True)
             return None
+
 
 def geometry_similarity(g1, g2) -> float:
     if g1 is None or g2 is None:
@@ -208,26 +237,33 @@ def geometry_similarity(g1, g2) -> float:
     sim = 100 - np.mean(diff / (np.abs(g1) + 1e-6)) * 100
     return float(np.clip(sim, 0, 100))
 
+
 # =============================================================================
 # InsightFace Engine
 # =============================================================================
 
 class InsightEngine:
-
     def __init__(self):
         logger.info("Initializing InsightFace engine")
         self.app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-        self.app.prepare(ctx_id=0, det_size=Config.DET_SIZE)
+        # Optional: det_thresh can be tuned, but left unchanged here.
+        _retry("insightface.prepare", lambda: self.app.prepare(ctx_id=0, 
+        det_size=Config.DET_SIZE), tries=3)
 
     def embed(self, path: str):
         img = cv2.imread(path)
         if img is None:
             return None
-        faces = self.app.get(img)
+
+        faces = _retry("insightface.get", lambda: self.app.get(img), tries=2)
         if not faces:
             return None
         return faces[0].embedding
 
+
+# =============================================================================
+# Verifier
+# =============================================================================
 def cosine_sim(a, b) -> float:
     if a is None or b is None:
         return 0.0
@@ -237,10 +273,6 @@ def cosine_sim(a, b) -> float:
         return 0.0
     return float(np.dot(a, b) / (na * nb))
 
-# =============================================================================
-# Verifier
-# =============================================================================
-
 class UltimateVerifier:
 
     def __init__(self):
@@ -249,6 +281,18 @@ class UltimateVerifier:
 
     def verify(self, img1: str, img2: str) -> VerificationResult:
         t0 = time.time()
+
+        # ---------------------------------------------------------------------
+        # Phase 2: Input validation (defensive only; algorithm unchanged)
+        # ---------------------------------------------------------------------
+        ok1, msg1 = validate_image_file(img1)
+        ok2, msg2 = validate_image_file(img2)
+        if not ok1 or not ok2:
+            q1 = ImageQualityAnalyzer.analyze(img1)
+            q2 = ImageQualityAnalyzer.analyze(img2)
+            msg = f"Image invalid: img1={msg1}, img2={msg2}"
+            return self._error(msg, t0, q1, q2)
+        # ---------------------------------------------------------------------
 
         q1 = ImageQualityAnalyzer.analyze(img1)
         q2 = ImageQualityAnalyzer.analyze(img2)
@@ -284,20 +328,28 @@ class UltimateVerifier:
             verdict, conf = "DIFFERENT", min(90, 70 - sim * 40)
 
         return VerificationResult(
-            verdict,
-            round(conf, 1),
-            sim,
-            geo,
-            quality,
-            time.time() - t0,
-            q1,
-            q2,
-            None,
+            verdict=verdict,
+            confidence=round(conf, 1),
+            similarity=sim,
+            geometry_sim=geo,
+            quality_avg=quality,
+            execution_time=time.time() - t0,
+            q1=q1,
+            q2=q2,
+            error=None,
         )
 
     def _error(self, msg, t0, q1, q2):
         return VerificationResult(
-            "ERROR", 0, 0, 0, 0, time.time() - t0, q1, q2, msg
+            verdict="ERROR",
+            confidence=0,
+            similarity=0,
+            geometry_sim=0,
+            quality_avg=0,
+            execution_time=time.time() - t0,
+            q1=q1,
+            q2=q2,
+            error=msg,
         )
 
     def __del__(self):
@@ -305,6 +357,7 @@ class UltimateVerifier:
             Geometry.cleanup()
         except Exception:
             pass
+
 
 # =============================================================================
 # Output Formatting
@@ -329,6 +382,7 @@ def print_formatted(result: VerificationResult):
     print(f"TIME                 : {result.execution_time:.2f}s")
     print("=" * 80 + "\n")
 
+
 def print_json(result: VerificationResult):
     output = {
         "verdict": result.verdict,
@@ -342,6 +396,7 @@ def print_json(result: VerificationResult):
         "error": result.error,
     }
     print(json.dumps(output, indent=2))
+
 
 # =============================================================================
 # Main
@@ -383,6 +438,6 @@ def main():
         logger.critical(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
 
+
 if __name__ == "__main__":
     main()
-
