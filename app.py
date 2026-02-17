@@ -328,3 +328,4 @@ st.markdown(
     '<div class="lz-footer">LazzyBioIntel v6.2 PRO — Developed By ASI Anudit Khatri</div></div>',
     unsafe_allow_html=True,
 )
+
