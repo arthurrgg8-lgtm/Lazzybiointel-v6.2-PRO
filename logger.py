@@ -55,3 +55,4 @@ class LogManager:
         logger.addHandler(console)
         logger.propagate = False
         return logger
+
