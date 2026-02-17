@@ -42,3 +42,4 @@ def cosine_sim(a, b) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return float(np.dot(a, b) / (na * nb))
+
