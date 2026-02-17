@@ -1,0 +1,17 @@
+# Virtual environments
+.venv/
+venv/
+venv310/
+lz_env/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Large binary files
+*.so
+*.dylib
+*.dll
+*.bin
