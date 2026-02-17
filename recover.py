@@ -31,3 +31,4 @@ def cleanup_old_sessions(max_age_seconds: int = 24 * 3600) -> None:
                 p.unlink()
         except Exception:
             pass
+
