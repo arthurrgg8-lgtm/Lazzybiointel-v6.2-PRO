@@ -13,6 +13,8 @@ import tempfile
 import os
 import json
 from typing import Optional
+from datetime import datetime
+import pandas as pd
 
 import recovery
 recovery.restore_session_state()
@@ -20,6 +22,7 @@ recovery.cleanup_old_sessions()
 
 from verify_v6 import UltimateVerifier, VerificationResult
 from occlusion_engine import OcclusionEngine, cosine_sim
+
 @st.cache_resource
 def get_verifier():
     return UltimateVerifier()
@@ -32,300 +35,729 @@ def get_occlusion_engine():
 # Page Configuration
 # =============================================================================
 st.set_page_config(
-    page_title="LazzyBioIntel v6.2 PRO",
-    page_icon="🧠",
-    layout="centered",
-    initial_sidebar_state="collapsed",
+    page_title="LazzyBioIntel v6.2 | Identity Verification System",
+    page_icon="🔐",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # =============================================================================
-# Session state
+# Session State Management
 # =============================================================================
-if "runs" not in st.session_state:
-    st.session_state.runs = 0
-if "times" not in st.session_state:
-    st.session_state.times = []
+if "verification_history" not in st.session_state:
+    st.session_state.verification_history = []
+if "session_id" not in st.session_state:
+    st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+if "audit_log" not in st.session_state:
+    st.session_state.audit_log = []
 
 # =============================================================================
-# Styles
+# Professional Dark Theme CSS
 # =============================================================================
-st.markdown(
-    """
+st.markdown("""
 <style>
-.stApp{
-  background: radial-gradient(circle at top, #020617 0%, #020617 40%, #020617 100%);
-  color: #e5e7eb;
-  font-family: -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
-}
-.lz-container{max-width:950px;margin:0 auto;}
-.lz-title{
-  font-size:2.8rem;font-weight:800;text-align:center;letter-spacing:-0.04em;margin-bottom:0.4rem;
-  background: linear-gradient(135deg,#38bdf8,#6366f1,#a855f7);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-}
-.lz-subtitle{text-align:center;color:#9ca3af;font-size:1.02rem;margin-bottom:0.4rem;}
-.lz-panel{
-  background: rgba(15,23,42,0.98); border-radius:20px; padding:1.9rem 1.7rem;
-  border: 1px solid rgba(148,163,184,0.4);
-  box-shadow: 0 20px 45px rgba(0,0,0,0.75);
-  margin-bottom: 1.5rem;
-}
-.lz-panel-soft{
-  background: rgba(15,23,42,0.96); border-radius:16px; padding:1.5rem 1.5rem;
-  border: 1px solid rgba(148,163,184,0.25); margin-bottom: 1.1rem;
-}
-.lz-section-title{font-size:1.15rem;font-weight:600;margin-bottom:0.7rem;}
-.lz-drop-card{
-  border-radius:18px;padding:1.1rem 1rem;
-  background: radial-gradient(circle at top left, #020617, #020617);
-  border: 1px solid rgba(148,163,184,0.55);
-  transition: box-shadow 0.25s ease,border-color 0.25s ease,transform 0.15s ease;
-}
-.lz-status-bar{
-  border-radius:999px;padding:0.45rem 0.9rem;font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;
-  color:#e5e7eb;background: radial-gradient(circle at left, #22c55e, #020617);
-  border: 1px solid rgba(34,197,94,0.7); box-shadow: 0 0 18px rgba(34,197,94,0.55); margin-top:0.7rem;
-}
-.lz-metric{
-  background: radial-gradient(circle at top, #020617, #020617 60%, #020617);
-  border-radius:16px;padding:0.9rem;border:1px solid rgba(56,189,248,0.7);
-  text-align:center;min-width:150px;min-height:90px;
-  display:flex;flex-direction:column;justify-content:center;align-items:center;
-  box-shadow: 0 0 14px rgba(56,189,248,0.45), 0 0 26px rgba(37,99,235,0.35);
-}
-.lz-metric-label{color:#9ca3af;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.08em;}
-.lz-metric-value{font-size:1.55rem;font-weight:600;margin-top:0.3rem;}
-.lz-verdict{margin-top:1.5rem;padding:1.1rem 1rem;border-radius:18px;font-size:1.5rem;font-weight:700;text-align:center;}
-.lz-verdict-success{background: radial-gradient(circle at top left,#22c55e,#14532d);box-shadow:0 0 34px rgba(34,197,94,0.55);}
-.lz-verdict-warning{background: radial-gradient(circle at top left,#f97316,#78350f);box-shadow:0 0 34px rgba(249,115,22,0.55);}
-.lz-verdict-error{background: radial-gradient(circle at top left,#ef4444,#7f1d1d);box-shadow:0 0 34px rgba(239,68,68,0.55);}
-.lz-feed{
-  font-family: SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
-  font-size:0.86rem;color:#e5e7eb;background:#020617;border-radius:10px;padding:0.55rem 0.9rem;
-  border:1px solid rgba(148,163,184,0.35);
-}
-.lz-footer{text-align:center;color:#6b7280;font-size:0.8rem;margin-top:1.6rem;padding-bottom:0.8rem;}
+    /* Global Styles */
+    .main {
+        background: linear-gradient(165deg, #0A0F1E 0%, #0F1425 100%);
+    }
+    
+    .stApp {
+        background: linear-gradient(165deg, #0A0F1E 0%, #0F1425 100%);
+    }
+    
+    /* Typography */
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+    }
+    
+    /* Custom Components */
+    .header-container {
+        background: linear-gradient(90deg, rgba(0, 30, 60, 0.95) 0%, rgba(20, 40, 80, 0.95) 100%);
+        border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+        padding: 1.5rem 2rem;
+        margin-bottom: 2rem;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+    
+    .title-main {
+        font-size: 2.2rem;
+        font-weight: 600;
+        background: linear-gradient(135deg, #00FFFF, #4169E1);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.25rem;
+        letter-spacing: -0.02em;
+    }
+    
+    .title-sub {
+        color: #8892b0;
+        font-size: 0.9rem;
+        font-weight: 400;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Metric Cards */
+    .metric-card {
+        background: linear-gradient(145deg, #141b2b, #0f1625);
+        border: 1px solid rgba(0, 255, 255, 0.15);
+        border-radius: 12px;
+        padding: 1.25rem;
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+        transition: transform 0.2s, border-color 0.2s;
+    }
+    
+    .metric-card:hover {
+        border-color: rgba(0, 255, 255, 0.4);
+        transform: translateY(-2px);
+    }
+    
+    .metric-label {
+        color: #8892b0;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 0.5rem;
+    }
+    
+    .metric-value {
+        color: #e6f1ff;
+        font-size: 2rem;
+        font-weight: 600;
+        line-height: 1.2;
+    }
+    
+    .metric-trend {
+        color: #4ade80;
+        font-size: 0.875rem;
+        margin-top: 0.5rem;
+    }
+    
+    /* Status Indicators */
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+    }
+    
+    .status-badge-success {
+        background: rgba(34, 197, 94, 0.15);
+        border: 1px solid rgba(34, 197, 94, 0.4);
+        color: #4ade80;
+    }
+    
+    .status-badge-warning {
+        background: rgba(249, 115, 22, 0.15);
+        border: 1px solid rgba(249, 115, 22, 0.4);
+        color: #fb923c;
+    }
+    
+    .status-badge-error {
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        color: #f87171;
+    }
+    
+    .status-badge-info {
+        background: rgba(59, 130, 246, 0.15);
+        border: 1px solid rgba(59, 130, 246, 0.4);
+        color: #60a5fa;
+    }
+    
+    /* Panels */
+    .panel {
+        background: rgba(18, 25, 40, 0.95);
+        border: 1px solid rgba(0, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 1.5rem;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    
+    .panel-header {
+        border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+        padding-bottom: 1rem;
+        margin-bottom: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .panel-title {
+        color: #e6f1ff;
+        font-size: 1.1rem;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+    }
+    
+    /* Verdict Display */
+    .verdict-container {
+        border-radius: 16px;
+        padding: 2rem;
+        margin: 1.5rem 0;
+        text-align: center;
+        background: linear-gradient(145deg, rgba(20, 30, 50, 0.9), rgba(15, 25, 40, 0.9));
+        border: 1px solid rgba(0, 255, 255, 0.2);
+    }
+    
+    .verdict-same {
+        background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.05));
+        border-color: rgba(34, 197, 94, 0.3);
+    }
+    
+    .verdict-different {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.05));
+        border-color: rgba(239, 68, 68, 0.3);
+    }
+    
+    .verdict-uncertain {
+        background: linear-gradient(135deg, rgba(249, 115, 22, 0.2), rgba(249, 115, 22, 0.05));
+        border-color: rgba(249, 115, 22, 0.3);
+    }
+    
+    .verdict-text {
+        font-size: 2.5rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        letter-spacing: -0.02em;
+    }
+    
+    /* Progress Animation */
+    .progress-container {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 8px;
+        height: 8px;
+        overflow: hidden;
+        margin: 1rem 0;
+    }
+    
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #00FFFF, #4169E1);
+        transition: width 0.3s ease;
+        border-radius: 8px;
+    }
+    
+    /* Upload Area */
+    .upload-area {
+        border: 2px dashed rgba(0, 255, 255, 0.3);
+        border-radius: 16px;
+        padding: 2rem;
+        text-align: center;
+        background: rgba(0, 0, 0, 0.2);
+        transition: all 0.2s;
+    }
+    
+    .upload-area:hover {
+        border-color: rgba(0, 255, 255, 0.6);
+        background: rgba(0, 255, 255, 0.05);
+    }
+    
+    /* Timestamp */
+    .timestamp {
+        color: #5a6a8a;
+        font-size: 0.75rem;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    
+    /* Divider */
+    .divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(0, 255, 255, 0.3), transparent);
+        margin: 2rem 0;
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background: linear-gradient(180deg, #0A0F1E 0%, #0F1425 100%);
+    }
+    
+    /* Streamlit Overrides */
+    .stButton > button {
+        background: linear-gradient(135deg, #00FFFF, #4169E1);
+        color: #0A0F1E;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 2rem;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+        transition: all 0.2s;
+        width: 100%;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(0, 255, 255, 0.3);
+    }
+    
+    .stTextInput > div > div > input {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(0, 255, 255, 0.2);
+        border-radius: 8px;
+        color: #e6f1ff;
+    }
+    
+    /* Data Tables */
+    .dataframe {
+        background: transparent !important;
+    }
+    
+    .dataframe th {
+        background: rgba(0, 255, 255, 0.1) !important;
+        color: #e6f1ff !important;
+        font-weight: 500 !important;
+    }
+    
+    .dataframe td {
+        color: #8892b0 !important;
+        border-bottom: 1px solid rgba(0, 255, 255, 0.1) !important;
+    }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 # =============================================================================
-# Header
+# Sidebar - System Status & Controls
 # =============================================================================
-st.markdown('<div class="lz-container">', unsafe_allow_html=True)
-st.markdown('<div class="lz-title">LazzyBioIntel v6.2 PRO</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="lz-subtitle">NPHQ - Special Bureau | Analyst Verification Dashboard</div>',
-    unsafe_allow_html=True,
-)
-st.caption("Copyright © 2025 Anudit Khatri")
-# =============================================================================
-# Input Panel
-# =============================================================================
-st.markdown('<div class="lz-panel">', unsafe_allow_html=True)
-st.markdown('<div class="lz-section-title">Image input</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div style="font-size:0.9rem;color:#9ca3af;margin-bottom:0.6rem">'
-    "Load two face images into the verification engine. Different captures of the same person give the most realistic result."
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-left, right = st.columns(2)
-
-with left:
-    st.markdown(
-        '<div style="margin-bottom:0.75rem">'
-        '<div style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.08em;color:#9ca3af">REFERENCE</div>'
-        '<div style="font-size:0.9rem;color:#e5e7eb">Primary identity image</div>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    imgref = st.file_uploader("Reference image", type=["jpg", "jpeg", "png"], label_visibility="collapsed", key="ref_uploader")
-
-with right:
-    st.markdown(
-        '<div style="margin-bottom:0.75rem">'
-        '<div style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.08em;color:#9ca3af">PROBE</div>'
-        '<div style="font-size:0.9rem;color:#e5e7eb">Image to verify against reference</div>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    imgprobe = st.file_uploader("Probe image", type=["jpg", "jpeg", "png"], label_visibility="collapsed", key="probe_uploader")
-
-# Preview
-if imgref or imgprobe:
-    st.markdown(
-        '<div style="margin-top:0.6rem;font-size:0.85rem;color:#9ca3af">Preview</div>',
-        unsafe_allow_html=True,
-    )
-    p1col, p2col = st.columns(2)
-    with p1col:
-        if imgref:
-            st.image(imgref, caption="Reference", width="stretch")  
-        else:
-            st.markdown(
-                '<div style="border-radius:12px;border:1px dashed rgba(148,163,184,0.5);padding:1.6rem;text-align:center;font-size:0.8rem;color:#6b7280">'
-                "Waiting for reference image"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-    with p2col:
-        if imgprobe:
-            st.image(imgprobe, caption="Probe", width="stretch") 
-        else:
-            st.markdown(
-                '<div style="border-radius:12px;border:1px dashed rgba(148,163,184,0.5);padding:1.6rem;text-align:center;font-size:0.8rem;color:#6b7280">'
-                "Waiting for probe image"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
-st.markdown("</div>", unsafe_allow_html=True)  # close input panel
-
-# =============================================================================
-# Run verification
-# =============================================================================
-run_clicked = st.button("Verify identity now")
-
-if run_clicked:
-    if not imgref or not imgprobe:
-        st.error("Please provide both reference and probe images.")
+with st.sidebar:
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem 0;">
+        <span style="font-size: 2rem;">🔐</span>
+        <h3 style="color: #e6f1ff; margin: 0.5rem 0;">LazzyBioIntel</h3>
+        <div class="status-badge status-badge-info">v6.2 PRO</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # System Status
+    st.markdown("### System Status")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        <div class="metric-card">
+            <div class="metric-label">Engine</div>
+            <div class="metric-value" style="font-size: 1rem;">🟢 Online</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("""
+        <div class="metric-card">
+            <div class="metric-label">Session</div>
+            <div class="metric-value" style="font-size: 1rem;">🟢 Active</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div style="margin: 1rem 0;">
+        <div class="metric-label">Session ID</div>
+        <code style="background: #0A0F1E; padding: 0.25rem 0.5rem; border-radius: 4px;">{st.session_state.session_id}</code>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # Quick Stats
+    st.markdown("### Session Statistics")
+    total_verifications = len(st.session_state.verification_history)
+    if total_verifications > 0:
+        same_count = sum(1 for v in st.session_state.verification_history if v['verdict'].startswith('SAME'))
+        different_count = sum(1 for v in st.session_state.verification_history if v['verdict'] == 'DIFFERENT')
+        
+        st.markdown(f"""
+        <div style="margin: 1rem 0;">
+            <div class="metric-label">Total Verifications</div>
+            <div class="metric-value" style="font-size: 1.5rem;">{total_verifications}</div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div>
+                <div class="metric-label">Same</div>
+                <div style="color: #4ade80; font-size: 1.25rem;">{same_count}</div>
+            </div>
+            <div>
+                <div class="metric-label">Different</div>
+                <div style="color: #f87171; font-size: 1.25rem;">{different_count}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f1, tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f2:
+        st.info("No verifications in this session")
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # Export & Controls
+    st.markdown("### Data Management")
+    if st.button("📊 Export Session Data", use_container_width=True):
+        if st.session_state.verification_history:
+            df = pd.DataFrame(st.session_state.verification_history)
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"verification_history_{st.session_state.session_id}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No data to export")
+    
+    if st.button("🔄 New Session", use_container_width=True):
+        st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.session_state.verification_history = []
+        st.rerun()
+
+# =============================================================================
+# Main Header
+# =============================================================================
+st.markdown("""
+<div class="header-container">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <div class="title-main">Identity Verification System</div>
+            <div class="title-sub">Advanced Biometric Analysis Engine • NPHQ Special Bureau</div>
+        </div>
+        <div style="text-align: right;">
+            <div class="timestamp">Session: """ + st.session_state.session_id + """</div>
+            <div class="timestamp">System Time: """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + """</div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# =============================================================================
+# Main Content Area - FIXED: Replaced use_column_width with use_container_width
+# =============================================================================
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="panel-header">
+        <span class="panel-title">📸 Reference Image Capture</span>
+        <span class="status-badge status-badge-info">PRIMARY IDENTITY</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    imgref = st.file_uploader(
+        "Upload reference image",
+        type=["jpg", "jpeg", "png"],
+        key="ref_uploader",
+        label_visibility="collapsed"
+    )
+    
+    if imgref:
+        # FIXED: Changed use_column_width=True to use_container_width=True
+        st.image(imgref, use_container_width=True)
+        st.markdown(f"""
+        <div style="margin-top: 0.5rem;">
+            <span class="status-badge status-badge-success">Loaded</span>
+            <span class="timestamp" style="margin-left: 0.5rem;">{imgref.name}</span>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="upload-area">
+            <span style="font-size: 3rem;">📁</span>
+            <p style="color: #8892b0; margin: 1rem 0;">Drag & drop or browse to upload</p>
+            <p style="color: #5a6a8a; font-size: 0.875rem;">Supports JPG, PNG • Max 10MB</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col2:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="panel-header">
+        <span class="panel-title">🔍 Probe Image Capture</span>
+        <span class="status-badge status-badge-info">VERIFICATION TARGET</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    imgprobe = st.file_uploader(
+        "Upload probe image",
+        type=["jpg", "jpeg", "png"],
+        key="probe_uploader",
+        label_visibility="collapsed"
+    )
+    
+    if imgprobe:
+        # FIXED: Changed use_column_width=True to use_container_width=True
+        st.image(imgprobe, use_container_width=True)
+        st.markdown(f"""
+        <div style="margin-top: 0.5rem;">
+            <span class="status-badge status-badge-success">Loaded</span>
+            <span class="timestamp" style="margin-left: 0.5rem;">{imgprobe.name}</span>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="upload-area">
+            <span style="font-size: 3rem;">🔍</span>
+            <p style="color: #8892b0; margin: 1rem 0;">Drag & drop or browse to upload</p>
+            <p style="color: #5a6a8a; font-size: 0.875rem;">Supports JPG, PNG • Max 10MB</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# =============================================================================
+# Verification Controls
+# =============================================================================
+st.markdown('<div class="panel" style="margin-top: 1rem;">', unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns([2, 1, 2])
+with col2:
+    run_verification = st.button("🚀 VERIFY IDENTITY", use_container_width=True)
+
+if run_verification:
+    if not imgref or not imgprobe:
+        st.error("⚠️ Please upload both reference and probe images")
+    else:
+        # Save temporary files
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f1, \
+             tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f2:
             f1.write(imgref.read())
             f2.write(imgprobe.read())
-            p1, p2 = f1.name, f2.name
-
+            ref_path, probe_path = f1.name, f2.name
+        
         try:
-            st.markdown('<div class="lz-panel-soft">', unsafe_allow_html=True)
-            st.markdown('<div class="lz-section-title">Analysis engine</div>', unsafe_allow_html=True)
-
-            statusbar = st.markdown('<div class="lz-status-bar">ENGINE STATUS: INITIALIZING</div>', unsafe_allow_html=True)
-            progress = st.progress(0)
-            feedplaceholder = st.empty()
-
-            def log(msg: str, pct: int, status: Optional[str] = None):
-                feedplaceholder.markdown(f'<div class="lz-feed">{msg}</div>', unsafe_allow_html=True)
-                progress.progress(pct)
-                if status:
-                    statusbar.markdown(f'<div class="lz-status-bar">{status}</div>', unsafe_allow_html=True)
+            # Verification Progress
+            progress_placeholder = st.empty()
+            status_placeholder = st.empty()
+            log_placeholder = st.empty()
+            
+            # Progress bar container
+            with progress_placeholder.container():
+                st.markdown("""
+                <div class="panel" style="margin: 1rem 0;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span class="panel-title">Analysis Progress</span>
+                        <span class="status-badge status-badge-info" id="progress-status">Initializing</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                progress_bar = st.progress(0)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            def update_progress(percent, status, message):
+                progress_bar.progress(percent)
+                status_placeholder.markdown(f"""
+                <div style="margin-top: 0.5rem;">
+                    <span class="status-badge status-badge-info">{status}</span>
+                    <span style="color: #8892b0; margin-left: 0.5rem;">{message}</span>
+                </div>
+                """, unsafe_allow_html=True)
                 time.sleep(0.2)
-
-            log("Booting verification engine", 20, "ENGINE STATUS: BOOTING")
+            
+            # Run verification
+            update_progress(20, "Loading", "Initializing neural networks...")
             verifier = get_verifier()
-
-            log("Running full pipeline (quality, embeddings, geometry)", 65, "ENGINE STATUS: ANALYSING")
-            result: VerificationResult = verifier.verify(p1, p2)
-
-            log("Done", 100, "ENGINE STATUS: DONE")
-            statusbar.empty()
-            progress.empty()
-            feedplaceholder.empty()
-
-            # Derived metrics
-            similarity = result.similarity
-            quality = result.quality_avg
-            confidence = result.confidence
-            rating10 = max(0.0, min(10.0, confidence / 10.0))
-            margin = similarity - 0.52
-            borderline = abs(margin) < 0.03
-
-            occsim = None
-            forensic_label = "Disabled"
+            
+            update_progress(45, "Processing", "Analyzing facial features...")
+            result: VerificationResult = verifier.verify(ref_path, probe_path)
+            
+            update_progress(80, "Computing", "Calculating similarity metrics...")
+            
+            # Occlusion analysis
             try:
                 occengine = get_occlusion_engine()
-                e1u = occengine.embed_upper_face(p1)
-                e2u = occengine.embed_upper_face(p2)
+                e1u = occengine.embed_upper_face(ref_path)
+                e2u = occengine.embed_upper_face(probe_path)
                 occsim = cosine_sim(e1u, e2u)
-
-                if result.verdict.startswith("SAME") and occsim > 0.55:
-                    forensic_label = "SUPPORTS SAME"
-                elif result.verdict == "UNCERTAIN" and occsim > 0.55:
-                    forensic_label = "LIKELY SAME (REVIEW)"
-                elif result.verdict == "DIFFERENT" and occsim < 0.40:
-                    forensic_label = "SUPPORTS DIFFERENT"
-                else:
-                    forensic_label = "INCONCLUSIVE"
-            except Exception:
+            except:
                 occsim = None
-                forensic_label = "Disabled"
-
-            # Metrics
-            st.markdown('<div class="lz-panel">', unsafe_allow_html=True)
-            st.markdown("<div class='lz-section-title'>Trust indicators</div>", unsafe_allow_html=True)
-
-            cols = st.columns(5 if occsim is not None else 4)
-            with cols[0]:
-                st.markdown(f"<div class='lz-metric'><div class='lz-metric-label'>Neural match</div><div class='lz-metric-value'>{similarity:.3f}</div></div>", unsafe_allow_html=True)
-            with cols[1]:
-                st.markdown(f"<div class='lz-metric'><div class='lz-metric-label'>Quality avg</div><div class='lz-metric-value'>{quality:.1f}/100</div></div>", unsafe_allow_html=True)
-            with cols[2]:
-                st.markdown(f"<div class='lz-metric'><div class='lz-metric-label'>Rating/10</div><div class='lz-metric-value'>{rating10:.1f}</div></div>", unsafe_allow_html=True)
-            with cols[3]:
-                st.markdown(f"<div class='lz-metric'><div class='lz-metric-label'>Borderline</div><div class='lz-metric-value'>{'YES' if borderline else 'NO'}</div></div>", unsafe_allow_html=True)
-            if occsim is not None:
-                with cols[4]:
-                    st.markdown(f"<div class='lz-metric'><div class='lz-metric-label'>Upper-face sim</div><div class='lz-metric-value'>{occsim:.3f}</div></div>", unsafe_allow_html=True)
-
-            if occsim is not None:
-                st.caption(forensic_label)
-
-            # Verdict
+            
+            update_progress(100, "Complete", "Verification finished")
+            
+            # Clear progress display
+            progress_placeholder.empty()
+            status_placeholder.empty()
+            
+            # Display Results
+            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+            
+            # Verdict Display - using beginning code format
             if result.error:
-                vclass = "lz-verdict lz-verdict-error"
+                vclass = "verdict-different"
                 vtext = f"ERROR: {result.error}"
                 explanation = "Engine could not complete verification. Check image quality / face visibility."
             elif result.verdict.startswith("SAME"):
-                vclass = "lz-verdict lz-verdict-success"
+                vclass = "verdict-same"
                 vtext = "SEEMS TO BE SAME PERSON"
                 explanation = "Neural similarity + quality support a same-person match."
             elif result.verdict == "UNCERTAIN":
-                vclass = "lz-verdict lz-verdict-warning"
+                vclass = "verdict-uncertain"
                 vtext = "UNCERTAIN MATCH — TRY MORE PICTURES"
                 explanation = "Signals are borderline/mixed. Capture better images and retry."
             else:
-                vclass = "lz-verdict lz-verdict-error"
+                vclass = "verdict-different"
                 vtext = "SEEMS DIFFERENT"
                 explanation = "Embeddings show clear differences."
-
-            st.markdown(f"<div class='{vclass}'>{vtext}</div>", unsafe_allow_html=True)
-            st.markdown(f"<p style='font-size:0.9rem;color:#e5e7eb;margin-top:0.45rem'>{explanation}</p>", unsafe_allow_html=True)
-
-            c1, c2 = st.columns(2)
-            c1.metric("Confidence", f"{confidence:.1f}%")
-            c2.metric("Processing time", f"{result.execution_time:.2f} s")
-
-            # JSON export
-            with st.expander("Production JSON export"):
-                payload = {
+            
+            st.markdown(f"<div class='verdict-container {vclass}'><div class='verdict-text'>{vtext}</div><div style='color: #8892b0; margin-bottom: 1rem;'>{explanation}</div>", unsafe_allow_html=True)
+            
+            # Add the confidence and similarity display
+            st.markdown(f"""
+            <div style="display: flex; justify-content: center; gap: 2rem; margin-top: 1rem;">
+                <div>
+                    <div class="metric-label">Confidence</div>
+                    <div style="font-size: 1.5rem; color: #e6f1ff;">{result.confidence:.1f}%</div>
+                </div>
+                <div>
+                    <div class="metric-label">Similarity</div>
+                    <div style="font-size: 1.5rem; color: #e6f1ff;">{result.similarity:.3f}</div>
+                </div>
+            </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Metrics Grid
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown("""
+                <div class="metric-card">
+                    <div class="metric-label">Neural Similarity</div>
+                    <div class="metric-value">{:.3f}</div>
+                </div>
+                """.format(result.similarity), unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("""
+                <div class="metric-card">
+                    <div class="metric-label">Quality Score</div>
+                    <div class="metric-value">{:.1f}/100</div>
+                </div>
+                """.format(result.quality_avg), unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown("""
+                <div class="metric-card">
+                    <div class="metric-label">Processing Time</div>
+                    <div class="metric-value">{:.2f}s</div>
+                </div>
+                """.format(result.execution_time), unsafe_allow_html=True)
+            
+            with col4:
+                if occsim:
+                    st.markdown("""
+                    <div class="metric-card">
+                        <div class="metric-label">Upper Face Match</div>
+                        <div class="metric-value">{:.3f}</div>
+                    </div>
+                    """.format(occsim), unsafe_allow_html=True)
+            
+            # Detailed Analysis
+            with st.expander("🔬 Detailed Analysis Report", expanded=False):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### Reference Image Analysis")
+                    st.metric("Quality Score", f"{result.q1.score:.1f}")
+                    if hasattr(result.q1, 'details'):
+                        st.json(result.q1.details)
+                
+                with col2:
+                    st.markdown("#### Probe Image Analysis")
+                    st.metric("Quality Score", f"{result.q2.score:.1f}")
+                    if hasattr(result.q2, 'details'):
+                        st.json(result.q2.details)
+                
+                st.markdown("#### Geometric Analysis")
+                st.metric("Geometric Similarity", f"{result.geometry_sim:.1f}%")
+                
+                st.markdown("#### Raw Data Export")
+                export_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "session_id": st.session_state.session_id,
                     "verdict": result.verdict,
                     "confidence": result.confidence,
-                    "similarity": round(result.similarity, 3),
-                    "geometry_similarity": round(result.geometry_sim, 1),
-                    "quality_average": round(result.quality_avg, 1),
-                    "execution_time": round(result.execution_time, 2),
-                    "image1_quality": result.q1.score,
-                    "image2_quality": result.q2.score,
-                    "error": result.error,
+                    "similarity": round(result.similarity, 4),
+                    "quality_average": round(result.quality_avg, 2),
+                    "execution_time": round(result.execution_time, 3),
+                    "reference_quality": result.q1.score,
+                    "probe_quality": result.q2.score,
+                    "geometric_similarity": round(result.geometry_sim, 2),
+                    "upper_face_similarity": round(occsim, 4) if occsim else None,
+                    "error": result.error
                 }
-                st.code(json.dumps(payload, indent=2), language="json")
-
-            st.markdown("</div>", unsafe_allow_html=True)  # close trust indicators panel
-            st.markdown("</div>", unsafe_allow_html=True)  # close analysis panel
-
+                st.json(export_data)
+                
+                # Download button for this verification
+                st.download_button(
+                    label="📥 Download Report (JSON)",
+                    data=json.dumps(export_data, indent=2),
+                    file_name=f"verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+            
+            # Save to history
+            st.session_state.verification_history.append({
+                "timestamp": datetime.now().isoformat(),
+                "verdict": result.verdict,
+                "confidence": result.confidence,
+                "similarity": result.similarity,
+                "quality": result.quality_avg,
+                "execution_time": result.execution_time
+            })
+            
         finally:
+            # Cleanup
             try:
-                os.unlink(p1)
-                os.unlink(p2)
-            except Exception:
+                os.unlink(ref_path)
+                os.unlink(probe_path)
+            except:
                 pass
 
+st.markdown('</div>', unsafe_allow_html=True)
+
+# =============================================================================
+# Recent Activity
+# =============================================================================
+if st.session_state.verification_history:
+    st.markdown('<div class="panel" style="margin-top: 1rem;">', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="panel-header">
+        <span class="panel-title">📋 Recent Verifications</span>
+        <span class="status-badge status-badge-info">LIVE FEED</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Create a DataFrame for display
+    history_df = pd.DataFrame(st.session_state.verification_history[-5:])  # Last 5
+    history_df = history_df[['timestamp', 'verdict', 'confidence', 'similarity', 'quality', 'execution_time']]
+    history_df.columns = ['Timestamp', 'Verdict', 'Confidence %', 'Similarity', 'Quality', 'Time (s)']
+    
+    st.dataframe(
+        history_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Confidence %": st.column_config.NumberColumn(format="%.1f%%"),
+            "Similarity": st.column_config.NumberColumn(format="%.3f"),
+            "Quality": st.column_config.NumberColumn(format="%.1f"),
+            "Time (s)": st.column_config.NumberColumn(format="%.2f")
+        }
+    )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# =============================================================================
 # Footer
-st.markdown("---")
-st.markdown(
-    '<div class="lz-footer">LazzyBioIntel v6.2 PRO — Developed By ASI Anudit Khatri</div></div>',
-    unsafe_allow_html=True,
-)
+# =============================================================================
+st.markdown("""
+<div style="margin-top: 3rem; padding: 1rem; text-align: center; border-top: 1px solid rgba(0, 255, 255, 0.1);">
+    <div style="color: #5a6a8a; font-size: 0.75rem;">
+        LazzyBioIntel v6.2 PRO — Enterprise Identity Verification System
+    </div>
+    <div style="color: #3a4a6a; font-size: 0.7rem; margin-top: 0.5rem;">
+        Developed by ASI Anudit Khatri • NPHQ Special Bureau • All operations are logged
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
