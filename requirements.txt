@@ -1,8 +1,45 @@
-streamlit>=1.28.0
-numpy>=1.24.3
-opencv-python-headless>=4.8.0
-Pillow>=10.0.0
-pandas>=2.0.0
+# ============================================================
+# LazzyBioIntel v6.3 PRO — Requirements
+# Enterprise Identity Verification System
+# Developed by ASI Anudit Khatri • NPHQ Special Bureau
+#
+# Python 3.11 (required — tested on 3.11.x)
+# Create venv: python3.11 -m venv .venv
+# Install:     pip install -r requirements.txt
+# ============================================================
+
+# --- Core Vision & Face Analysis ---
+opencv-python==4.10.0.84
+insightface==0.7.3
+onnxruntime==1.19.2
+
+# --- MediaPipe (face mesh / geometry) ---
+# CRITICAL: Must be exactly 0.10.14 on Python 3.11
+# Other versions cause mp.solutions.face_mesh API mismatch
 mediapipe==0.10.14
-insightface>=0.7.3
-onnxruntime>=1.17.0
+
+# --- Numerical ---
+numpy>=1.24.0,<2.0.0
+
+# --- Web UI ---
+streamlit>=1.35.0
+pandas>=2.0.0
+
+# --- Utilities (stdlib supplements) ---
+# All other imports (os, sys, json, time, logging,
+# dataclasses, typing, pathlib, hashlib) are stdlib — no install needed.
+
+# ============================================================
+# Optional: GPU acceleration (uncomment if NVIDIA GPU available)
+# Replace onnxruntime above with:
+# onnxruntime-gpu==1.19.2
+# ============================================================
+
+# ============================================================
+# System-level dependencies (install via apt, not pip):
+#
+#   sudo apt install libgl1 libglib2.0-0
+#
+# Required by OpenCV on headless Linux servers.
+# Already present on most desktop Ubuntu installs.
+# ============================================================
