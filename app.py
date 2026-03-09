@@ -22,6 +22,7 @@ recovery.cleanup_old_sessions()
 
 from verify_v6 import UltimateVerifier, VerificationResult
 from occlusion_engine import OcclusionEngine, cosine_sim
+from fusion_engine import FusionEngine, print_fusion_report   # NEW v6.3
 
 @st.cache_resource
 def get_verifier():
@@ -30,6 +31,12 @@ def get_verifier():
 @st.cache_resource
 def get_occlusion_engine():
     return OcclusionEngine()
+
+@st.cache_resource                                            # NEW v6.3
+def get_fusion_engine():
+    # Share the already-loaded buffalo_l from UltimateVerifier — saves ~500MB RAM
+    verifier = get_verifier()
+    return FusionEngine(shared_app=verifier.engine.app)
 
 # =============================================================================
 # Page Configuration
@@ -557,13 +564,22 @@ if run_verification:
             # Run verification
             update_progress(20, "Loading", "Initializing neural networks...")
             verifier = get_verifier()
-            
-            update_progress(45, "Processing", "Analyzing facial features...")
+
+            update_progress(40, "Processing", "Analyzing facial features...")
             result: VerificationResult = verifier.verify(ref_path, probe_path)
-            
-            update_progress(80, "Computing", "Calculating similarity metrics...")
-            
-            # Occlusion analysis
+
+            update_progress(65, "Computing", "Running fusion engine (age/occlusion)...")
+            # --- Fusion Engine (NEW v6.3) ---
+            fusion_result = None
+            try:
+                fusion_eng = get_fusion_engine()
+                fusion_result = fusion_eng.verify(ref_path, probe_path, result)
+            except Exception as _fe:
+                pass   # fusion failure never breaks core result
+
+            update_progress(85, "Computing", "Calculating similarity metrics...")
+
+            # Legacy occlusion sim (kept for metric card backward compat)
             try:
                 occengine = get_occlusion_engine()
                 e1u = occengine.embed_upper_face(ref_path)
@@ -571,7 +587,7 @@ if run_verification:
                 occsim = cosine_sim(e1u, e2u)
             except:
                 occsim = None
-            
+
             update_progress(100, "Complete", "Verification finished")
             
             # Clear progress display
@@ -581,40 +597,64 @@ if run_verification:
             # Display Results
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
             
-            # Verdict Display - using beginning code format
+            # Verdict Display
+            # Fusion verdict takes priority when available; core is always preserved
+            active_verdict    = fusion_result.fusion_verdict   if fusion_result else result.verdict
+            active_confidence = fusion_result.fusion_confidence if fusion_result else result.confidence
+            fusion_active     = fusion_result is not None and not fusion_result.error
+
             if result.error:
                 vclass = "verdict-different"
                 vtext = f"ERROR: {result.error}"
                 explanation = "Engine could not complete verification. Check image quality / face visibility."
-            elif result.verdict.startswith("SAME"):
+            elif active_verdict.startswith("FUSION_SAME") or active_verdict.startswith("SAME"):
                 vclass = "verdict-same"
                 vtext = "SEEMS TO BE SAME PERSON"
-                explanation = "Neural similarity + quality support a same-person match."
-            elif result.verdict == "UNCERTAIN":
+                explanation = "Fusion engine (age + occlusion aware) supports a same-person match." if fusion_active else "Neural similarity + quality support a same-person match."
+            elif "UNCERTAIN" in active_verdict:
                 vclass = "verdict-uncertain"
                 vtext = "UNCERTAIN MATCH — TRY MORE PICTURES"
                 explanation = "Signals are borderline/mixed. Capture better images and retry."
             else:
                 vclass = "verdict-different"
                 vtext = "SEEMS DIFFERENT"
-                explanation = "Embeddings show clear differences."
+                explanation = "Embeddings show clear differences across all fusion zones."
             
             st.markdown(f"<div class='verdict-container {vclass}'><div class='verdict-text'>{vtext}</div><div style='color: #8892b0; margin-bottom: 1rem;'>{explanation}</div>", unsafe_allow_html=True)
-            
-            # Add the confidence and similarity display
-            st.markdown(f"""
-            <div style="display: flex; justify-content: center; gap: 2rem; margin-top: 1rem;">
-                <div>
-                    <div class="metric-label">Confidence</div>
-                    <div style="font-size: 1.5rem; color: #e6f1ff;">{result.confidence:.1f}%</div>
+
+            # Confidence + similarity row — shows fusion when available
+            if fusion_active:
+                st.markdown(f"""
+                <div style="display: flex; justify-content: center; gap: 2rem; margin-top: 1rem;">
+                    <div style="text-align:center;">
+                        <div class="metric-label">Core Confidence</div>
+                        <div style="font-size: 1.3rem; color: #8892b0;">{result.confidence:.1f}%</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div class="metric-label">Fusion Confidence</div>
+                        <div style="font-size: 1.5rem; color: #e6f1ff;">{fusion_result.fusion_confidence:.1f}%</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div class="metric-label">Fused Similarity</div>
+                        <div style="font-size: 1.5rem; color: #e6f1ff;">{fusion_result.fused_sim:.3f}</div>
+                    </div>
                 </div>
-                <div>
-                    <div class="metric-label">Similarity</div>
-                    <div style="font-size: 1.5rem; color: #e6f1ff;">{result.similarity:.3f}</div>
                 </div>
-            </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="display: flex; justify-content: center; gap: 2rem; margin-top: 1rem;">
+                    <div>
+                        <div class="metric-label">Confidence</div>
+                        <div style="font-size: 1.5rem; color: #e6f1ff;">{result.confidence:.1f}%</div>
+                    </div>
+                    <div>
+                        <div class="metric-label">Similarity</div>
+                        <div style="font-size: 1.5rem; color: #e6f1ff;">{result.similarity:.3f}</div>
+                    </div>
+                </div>
+                </div>
+                """, unsafe_allow_html=True)
             
             # Metrics Grid
             col1, col2, col3, col4 = st.columns(4)
@@ -644,7 +684,15 @@ if run_verification:
                 """.format(result.execution_time), unsafe_allow_html=True)
             
             with col4:
-                if occsim:
+                if fusion_active:
+                    st.markdown("""
+                    <div class="metric-card">
+                        <div class="metric-label">Periocular Sim</div>
+                        <div class="metric-value">{:.3f}</div>
+                        <div class="metric-trend">Age-robust zone</div>
+                    </div>
+                    """.format(fusion_result.periocular_sim), unsafe_allow_html=True)
+                elif occsim:
                     st.markdown("""
                     <div class="metric-card">
                         <div class="metric-label">Upper Face Match</div>
@@ -655,40 +703,92 @@ if run_verification:
             # Detailed Analysis
             with st.expander("🔬 Detailed Analysis Report", expanded=False):
                 col1, col2 = st.columns(2)
-                
+
                 with col1:
                     st.markdown("#### Reference Image Analysis")
                     st.metric("Quality Score", f"{result.q1.score:.1f}")
                     if hasattr(result.q1, 'details'):
                         st.json(result.q1.details)
-                
+
                 with col2:
                     st.markdown("#### Probe Image Analysis")
                     st.metric("Quality Score", f"{result.q2.score:.1f}")
                     if hasattr(result.q2, 'details'):
                         st.json(result.q2.details)
-                
+
                 st.markdown("#### Geometric Analysis")
                 st.metric("Geometric Similarity", f"{result.geometry_sim:.1f}%")
-                
+
+                # --- Fusion breakdown (NEW v6.3) ---
+                if fusion_active:
+                    st.markdown("#### 🔀 Fusion Engine Breakdown")
+                    fc1, fc2, fc3 = st.columns(3)
+                    with fc1:
+                        st.metric("Periocular Sim", f"{fusion_result.periocular_sim:.3f}",
+                                  help="Eye/brow region — most stable across aging")
+                    with fc2:
+                        st.metric("Zone-Weighted Sim", f"{fusion_result.zone_sim:.3f}",
+                                  help="Weighted across usable face zones")
+                    with fc3:
+                        st.metric("Fused Similarity", f"{fusion_result.fused_sim:.3f}",
+                                  help="Combined core + periocular + zone score")
+
+                    # Build weights display safely — getattr guards against stale cache
+                    w         = getattr(fusion_result, "weights_used", None) or {}
+                    q_gap     = getattr(fusion_result, "quality_gap", 0.0)
+                    enh1_flag = getattr(fusion_result, "enhanced_img1", False)
+                    enh2_flag = getattr(fusion_result, "enhanced_img2", False)
+                    r_adj     = getattr(fusion_result, "rescue_adj", 0.0)
+                    enh_flags = []
+                    if enh1_flag:
+                        enh_flags.append("img1")
+                    if enh2_flag:
+                        enh_flags.append("img2")
+                    enh_str = ", ".join(enh_flags) if enh_flags else "none"
+
+                    st.markdown(f"""
+                    | Field | Value |
+                    |---|---|
+                    | Occlusion img1 | `{fusion_result.occlusion_img1}` |
+                    | Occlusion img2 | `{fusion_result.occlusion_img2}` |
+                    | Zones used | `{', '.join(fusion_result.zones_used)}` |
+                    | Periocular method | `{fusion_result.periocular_method}` |
+                    | Quality gap | `{q_gap:.1f} pts` |
+                    | Enhanced images | `{enh_str}` |
+                    | Weights (core/peri/zone) | `{w.get('core', 0):.2f} / {w.get('periocular', 0):.2f} / {w.get('zone', 0):.2f}` |
+                    | Rescue threshold adj | `{r_adj:+.3f}` |
+                    | Fusion verdict | `{fusion_result.fusion_verdict}` |
+                    | Fusion confidence | `{fusion_result.fusion_confidence:.1f}%` |
+                    """)
+
                 st.markdown("#### Raw Data Export")
                 export_data = {
                     "timestamp": datetime.now().isoformat(),
                     "session_id": st.session_state.session_id,
-                    "verdict": result.verdict,
-                    "confidence": result.confidence,
-                    "similarity": round(result.similarity, 4),
+                    # Core (unchanged)
+                    "core_verdict": result.verdict,
+                    "core_confidence": result.confidence,
+                    "core_similarity": round(result.similarity, 4),
                     "quality_average": round(result.quality_avg, 2),
                     "execution_time": round(result.execution_time, 3),
                     "reference_quality": result.q1.score,
                     "probe_quality": result.q2.score,
                     "geometric_similarity": round(result.geometry_sim, 2),
                     "upper_face_similarity": round(occsim, 4) if occsim else None,
-                    "error": result.error
+                    "error": result.error,
+                    # Fusion (new)
+                    "fusion_verdict": fusion_result.fusion_verdict if fusion_active else None,
+                    "fusion_confidence": fusion_result.fusion_confidence if fusion_active else None,
+                    "fused_similarity": fusion_result.fused_sim if fusion_active else None,
+                    "periocular_similarity": fusion_result.periocular_sim if fusion_active else None,
+                    "zone_weighted_similarity": fusion_result.zone_sim if fusion_active else None,
+                    "occlusion_img1": fusion_result.occlusion_img1 if fusion_active else None,
+                    "occlusion_img2": fusion_result.occlusion_img2 if fusion_active else None,
+                    "zones_used": fusion_result.zones_used if fusion_active else None,
+                    "fusion_error": fusion_result.error if fusion_active else "not_run",
                 }
                 st.json(export_data)
-                
-                # Download button for this verification
+
                 st.download_button(
                     label="📥 Download Report (JSON)",
                     data=json.dumps(export_data, indent=2),
@@ -760,4 +860,3 @@ st.markdown("""
     </div>
 </div>
 """, unsafe_allow_html=True)
-
