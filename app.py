@@ -12,17 +12,42 @@ import time
 import tempfile
 import os
 import json
+import base64
+import mimetypes
 from typing import Optional
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
 
 import recovery
-recovery.restore_session_state()
+from logger import LogManager
+from access_control import (
+    authenticate_user,
+    delete_user,
+    ensure_bootstrap_admin,
+    get_login_events,
+    get_users,
+    init_access_db,
+    update_user,
+    upsert_user,
+)
+
+logger = LogManager.get_logger("app")
+
+restored_state = recovery.restore_session_state()
 recovery.cleanup_old_sessions()
+try:
+    init_access_db()
+    ensure_bootstrap_admin()
+except Exception:
+    logger.critical("Access control initialization failed", exc_info=True)
+    st.error("Critical startup error: access-control database failed to initialize.")
+    st.stop()
 
 from verify_v6 import UltimateVerifier, VerificationResult
 from occlusion_engine import OcclusionEngine, cosine_sim
 from fusion_engine import FusionEngine, print_fusion_report   # NEW v6.3
+from evidence_locker import save_evidence_pair
 
 @st.cache_resource
 def get_verifier():
@@ -52,11 +77,84 @@ st.set_page_config(
 # Session State Management
 # =============================================================================
 if "verification_history" not in st.session_state:
-    st.session_state.verification_history = []
+    st.session_state.verification_history = restored_state.get("verification_history", [])
 if "session_id" not in st.session_state:
-    st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.session_state.session_id = restored_state.get(
+        "session_id", datetime.now().strftime("%Y%m%d_%H%M%S")
+    )
 if "audit_log" not in st.session_state:
-    st.session_state.audit_log = []
+    st.session_state.audit_log = restored_state.get("audit_log", [])
+if "access_authenticated" not in st.session_state:
+    st.session_state.access_authenticated = False
+if "access_user_name" not in st.session_state:
+    st.session_state.access_user_name = None
+if "access_user_role" not in st.session_state:
+    st.session_state.access_user_role = None
+
+
+def _find_nepal_police_logo() -> Optional[str]:
+    candidates = [
+        "nepalpolicelogo.webp",
+        "assets/nepalpolicelogo.webp",
+        "assets/nepal_police_logo.webp",
+        "assets/nepal_police_logo.gif",
+        "assets/nepal_police_logo.png",
+        "assets/nepal_police_logo.jpg",
+        "assets/nepal_police_logo.jpeg",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _find_nepal_flag() -> Optional[str]:
+    candidates = [
+        "nepalflag.webp",
+        "nepalflag.png",
+        "nepalflag.jpg",
+        "nepalflag.jpeg",
+        "assets/nepalflag.webp",
+        "assets/nepalflag.png",
+        "assets/nepalflag.jpg",
+        "assets/nepalflag.jpeg",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _img_data_uri(path: str) -> Optional[str]:
+    try:
+        mime, _ = mimetypes.guess_type(path)
+        if not mime:
+            mime = "image/png"
+        raw = Path(path).read_bytes()
+        enc = base64.b64encode(raw).decode("ascii")
+        return f"data:{mime};base64,{enc}"
+    except Exception:
+        logger.warning("Failed to load image for login header: %s", path, exc_info=True)
+        return None
+
+
+def _client_context() -> tuple[str, str]:
+    client_ip = "unknown"
+    user_agent = "unknown"
+    try:
+        headers = getattr(st.context, "headers", {}) or {}
+        xff = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For")
+        xri = headers.get("x-real-ip") or headers.get("X-Real-Ip")
+        uah = headers.get("user-agent") or headers.get("User-Agent")
+        if xff:
+            client_ip = str(xff).split(",")[0].strip()
+        elif xri:
+            client_ip = str(xri).strip()
+        if uah:
+            user_agent = str(uah)
+    except Exception:
+        logger.warning("Could not read client headers", exc_info=True)
+    return client_ip, user_agent
 
 # =============================================================================
 # Professional Dark Theme CSS
@@ -87,6 +185,18 @@ st.markdown("""
         margin-bottom: 2rem;
         backdrop-filter: blur(10px);
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        position: relative;
+        overflow: hidden;
+        border-radius: 20px;
+        transform: perspective(1400px) rotateX(0.6deg);
+    }
+
+    .header-container::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(255,255,255,0.08), transparent 38%);
+        pointer-events: none;
     }
     
     .title-main {
@@ -108,16 +218,26 @@ st.markdown("""
     
     /* Metric Cards */
     .metric-card {
-        background: linear-gradient(145deg, #141b2b, #0f1625);
-        border: 1px solid rgba(0, 255, 255, 0.15);
-        border-radius: 12px;
+        background: linear-gradient(145deg, rgba(17, 31, 54, 0.96), rgba(10, 21, 39, 0.94));
+        border: 1px solid rgba(138, 177, 228, 0.12);
+        border-radius: 18px;
         padding: 1.25rem;
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
         transition: transform 0.2s, border-color 0.2s;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .metric-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(255,255,255,0.05), transparent 26%);
+        pointer-events: none;
     }
     
     .metric-card:hover {
-        border-color: rgba(0, 255, 255, 0.4);
+        border-color: rgba(106, 177, 255, 0.28);
         transform: translateY(-2px);
     }
     
@@ -146,11 +266,11 @@ st.markdown("""
     .status-badge {
         display: inline-flex;
         align-items: center;
-        padding: 0.25rem 0.75rem;
+        padding: 0.35rem 0.75rem;
         border-radius: 20px;
         font-size: 0.75rem;
-        font-weight: 500;
-        letter-spacing: 0.5px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
     }
     
@@ -180,16 +300,27 @@ st.markdown("""
     
     /* Panels */
     .panel {
-        background: rgba(18, 25, 40, 0.95);
-        border: 1px solid rgba(0, 255, 255, 0.1);
-        border-radius: 16px;
+        background: linear-gradient(180deg, rgba(16, 29, 49, 0.96), rgba(12, 23, 39, 0.94));
+        border: 1px solid rgba(138, 177, 228, 0.10);
+        border-radius: 22px;
         padding: 1.5rem;
         backdrop-filter: blur(10px);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+        position: relative;
+        overflow: hidden;
+        transform: translateZ(0);
+    }
+
+    .panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(255,255,255,0.05), transparent 22%);
+        pointer-events: none;
     }
     
     .panel-header {
-        border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+        border-bottom: 1px solid rgba(138, 177, 228, 0.10);
         padding-bottom: 1rem;
         margin-bottom: 1.5rem;
         display: flex;
@@ -199,19 +330,22 @@ st.markdown("""
     
     .panel-title {
         color: #e6f1ff;
-        font-size: 1.1rem;
-        font-weight: 500;
-        letter-spacing: -0.01em;
+        font-size: 1.08rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
     }
     
     /* Verdict Display */
     .verdict-container {
-        border-radius: 16px;
+        border-radius: 22px;
         padding: 2rem;
         margin: 1.5rem 0;
         text-align: center;
-        background: linear-gradient(145deg, rgba(20, 30, 50, 0.9), rgba(15, 25, 40, 0.9));
-        border: 1px solid rgba(0, 255, 255, 0.2);
+        background: linear-gradient(145deg, rgba(17, 31, 54, 0.94), rgba(11, 23, 38, 0.96));
+        border: 1px solid rgba(138, 177, 228, 0.14);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255,255,255,0.06);
+        transform: perspective(1200px) rotateX(1.2deg);
+        animation: riseIn 520ms ease;
     }
     
     .verdict-same {
@@ -254,17 +388,18 @@ st.markdown("""
     
     /* Upload Area */
     .upload-area {
-        border: 2px dashed rgba(0, 255, 255, 0.3);
-        border-radius: 16px;
+        border: 1px dashed rgba(138, 177, 228, 0.24);
+        border-radius: 22px;
         padding: 2rem;
         text-align: center;
-        background: rgba(0, 0, 0, 0.2);
+        background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.05));
         transition: all 0.2s;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.03);
     }
-    
+
     .upload-area:hover {
-        border-color: rgba(0, 255, 255, 0.6);
-        background: rgba(0, 255, 255, 0.05);
+        border-color: rgba(106, 177, 255, 0.34);
+        background: linear-gradient(180deg, rgba(106,177,255,0.05), rgba(255,255,255,0.06));
     }
     
     /* Timestamp */
@@ -297,11 +432,43 @@ st.markdown("""
         letter-spacing: 0.5px;
         transition: all 0.2s;
         width: 100%;
+        box-shadow: 0 10px 22px rgba(17, 49, 96, 0.28);
     }
     
     .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 8px 16px rgba(0, 255, 255, 0.3);
+    }
+
+    @keyframes riseIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px) scale(0.985);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    @keyframes floatGlow {
+        from {
+            transform: translateY(0px);
+        }
+        to {
+            transform: translateY(-3px);
+        }
+    }
+
+    .metric-card, .upload-area {
+        animation: floatGlow 4.2s ease-in-out infinite alternate;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .metric-card, .upload-area, .verdict-container, .stButton > button {
+            animation: none !important;
+            transition: none !important;
+        }
     }
     
     .stTextInput > div > div > input {
@@ -330,6 +497,76 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================================
+# Access Control (Name + 6-digit Computer Code)
+# =============================================================================
+if not st.session_state.access_authenticated:
+    logo_path = _find_nepal_police_logo()
+    flag_path = _find_nepal_flag()
+    logo_uri = _img_data_uri(logo_path) if logo_path else None
+    flag_uri = _img_data_uri(flag_path) if flag_path else None
+    if logo_uri or flag_uri:
+        st.markdown(
+            f"""
+            <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:0.5rem;">
+                <div style="flex:1;">
+                    {"<img src='" + logo_uri + "' style='height:98px; width:auto; object-fit:contain;'/>" if logo_uri else ""}
+                </div>
+                <div>
+                    {"<img src='" + flag_uri + "' style='height:82px; width:auto; object-fit:contain;'/>" if flag_uri else ""}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        """
+        <div class="header-container">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div class="title-main">Secure Access Required</div>
+                    <div class="title-sub">Enter your full name and 6-digit computer code</div>
+                </div>
+                <div style="text-align: right;">
+                    <div class="timestamp">System Time: """
+        + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        + """</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True):
+        st.subheader("Login")
+        with st.form("name_code_login_form", clear_on_submit=False):
+            full_name_in = st.text_input("Full Name")
+            code_in = st.text_input("Computer Code (6 digits)", max_chars=6, type="password")
+            submit_login = st.form_submit_button("Access System", use_container_width=True)
+
+        if submit_login:
+            client_ip, user_agent = _client_context()
+            ok, msg, user = authenticate_user(
+                full_name_in,
+                code_in,
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
+            if ok and user:
+                st.session_state.access_authenticated = True
+                st.session_state.access_user_name = user["full_name"]
+                st.session_state.access_user_role = user["role"]
+                st.rerun()
+            else:
+                st.error(msg)
+
+        with st.expander("Need Access or Forgot Credentials?"):
+            st.info("Contact Developer - Name: ASI Anudit Khatri | Contact: 9851291019")
+
+    st.stop()
+
+# =============================================================================
 # Sidebar - System Status & Controls
 # =============================================================================
 with st.sidebar:
@@ -340,9 +577,25 @@ with st.sidebar:
         <div class="status-badge status-badge-info">v6.2 PRO</div>
     </div>
     """, unsafe_allow_html=True)
-    
+
+    st.markdown(
+        f"""
+        <div style="margin: 0.75rem 0 0.25rem 0;">
+            <div class="metric-label">Logged In User</div>
+            <div style="color: #e6f1ff; font-size: 1rem; font-weight: 600;">{st.session_state.access_user_name}</div>
+            <div class="timestamp">Role: {st.session_state.access_user_role}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Logout", use_container_width=True):
+        st.session_state.access_authenticated = False
+        st.session_state.access_user_name = None
+        st.session_state.access_user_role = None
+        st.rerun()
+
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    
+
     # System Status
     st.markdown("### System Status")
     col1, col2 = st.columns(2)
@@ -360,23 +613,22 @@ with st.sidebar:
             <div class="metric-value" style="font-size: 1rem;">🟢 Active</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     st.markdown(f"""
     <div style="margin: 1rem 0;">
         <div class="metric-label">Session ID</div>
         <code style="background: #0A0F1E; padding: 0.25rem 0.5rem; border-radius: 4px;">{st.session_state.session_id}</code>
     </div>
     """, unsafe_allow_html=True)
-    
+
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    
-    # Quick Stats
+
+    # Session Statistics
     st.markdown("### Session Statistics")
     total_verifications = len(st.session_state.verification_history)
     if total_verifications > 0:
         same_count = sum(1 for v in st.session_state.verification_history if v['verdict'].startswith('SAME'))
         different_count = sum(1 for v in st.session_state.verification_history if v['verdict'] == 'DIFFERENT')
-        
         st.markdown(f"""
         <div style="margin: 1rem 0;">
             <div class="metric-label">Total Verifications</div>
@@ -395,10 +647,10 @@ with st.sidebar:
         """, unsafe_allow_html=True)
     else:
         st.info("No verifications in this session")
-    
+
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    
-    # Export & Controls
+
+    # Data Management
     st.markdown("### Data Management")
     if st.button("📊 Export Session Data", use_container_width=True):
         if st.session_state.verification_history:
@@ -412,20 +664,118 @@ with st.sidebar:
             )
         else:
             st.warning("No data to export")
-    
+
     if st.button("🔄 New Session", use_container_width=True):
         st.session_state.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.session_state.verification_history = []
         st.rerun()
 
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("### Access Control")
+    if st.session_state.access_user_role == "admin":
+            with st.expander("Admin Panel", expanded=False):
+                with st.form("admin_user_add_form"):
+                    admin_name = st.text_input("Full Name", help="Must be unique; admin can update existing user with same name.")
+                    admin_code = st.text_input("Computer Code (6 digits)", max_chars=6, type="password")
+                    admin_role = st.selectbox("Role", ["staff", "admin"], index=0)
+                    admin_active = st.checkbox("Active", value=True)
+                    admin_submit = st.form_submit_button("Save User", use_container_width=True)
+                if admin_submit:
+                    try:
+                        action = upsert_user(admin_name, admin_code, role=admin_role, active=admin_active)
+                        st.success(f"User {action} successfully.")
+                    except Exception as admin_err:
+                        st.error(f"Could not save user: {admin_err}")
+
+                users = get_users()
+                if users:
+                    user_options = {f"{u['full_name']} ({u['role']})": u for u in users}
+                    selected_label = st.selectbox("Select User to Edit/Remove", options=list(user_options.keys()))
+                    selected_user = user_options[selected_label]
+
+                    with st.form("admin_user_edit_form"):
+                        edit_name = st.text_input("Edit Full Name", value=selected_user["full_name"])
+                        edit_code = st.text_input("New Computer Code (6 digits, optional)", max_chars=6, type="password")
+                        edit_role = st.selectbox(
+                            "Edit Role",
+                            ["staff", "admin"],
+                            index=0 if selected_user["role"] == "staff" else 1,
+                        )
+                        edit_active = st.checkbox("Active", value=bool(selected_user["active"]))
+                        edit_submit = st.form_submit_button("Update User", use_container_width=True)
+                    if edit_submit:
+                        try:
+                            update_user(
+                                user_id=int(selected_user["id"]),
+                                full_name=edit_name,
+                                computer_code=edit_code,
+                                role=edit_role,
+                                active=edit_active,
+                            )
+                            st.success("User updated successfully.")
+                            st.rerun()
+                        except Exception as edit_err:
+                            st.error(f"Could not update user: {edit_err}")
+
+                    if st.button("Remove Selected User", use_container_width=True):
+                        try:
+                            delete_user(int(selected_user["id"]))
+                            st.success("User removed successfully.")
+                            st.rerun()
+                        except Exception as del_err:
+                            st.error(f"Could not remove user: {del_err}")
+
+                    users_df = pd.DataFrame(users)
+                    users_df["active"] = users_df["active"].map({1: "YES", 0: "NO"})
+                    users_df = users_df.rename(columns={"active": "is_active", "created_at": "created_utc", "updated_at": "updated_utc", "last_login_at": "last_login_utc"})
+                    st.dataframe(
+                        users_df[["full_name", "role", "is_active", "last_login_utc", "updated_utc"]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.info("No users found.")
+
+            st.markdown("#### Login Audit")
+            login_events = get_login_events(limit=150)
+            if login_events:
+                audit_df = pd.DataFrame(login_events)
+                audit_df["success"] = audit_df["success"].map({1: "SUCCESS", 0: "FAILED"})
+                audit_df = audit_df.rename(
+                    columns={
+                        "created_at": "timestamp_utc",
+                        "full_name": "user_name",
+                        "client_ip": "ip",
+                    }
+                )
+                st.dataframe(
+                    audit_df[["timestamp_utc", "user_name", "success", "reason", "ip"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No login events yet.")
+    else:
+        st.info("Admin panel and login audit visible only to admin users.")
+
 # =============================================================================
 # Main Header
 # =============================================================================
-st.markdown("""
+header_logo_html = ""
+header_logo_path = _find_nepal_police_logo()
+if header_logo_path:
+    header_logo_uri = _img_data_uri(header_logo_path)
+    if header_logo_uri:
+        header_logo_html = f"<img src='{header_logo_uri}' style='height:42px; width:auto; object-fit:contain; margin-right:10px;'/>"
+
+st.markdown(f"""
 <div class="header-container">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
-            <div class="title-main">Identity Verification System</div>
+            <div style="display:flex; align-items:center;">
+                {header_logo_html}
+                <div class="title-main">Identity Verification System (For Analysts)</div>
+            </div>
             <div class="title-sub">Advanced Biometric Analysis Engine • NPHQ Special Bureau</div>
         </div>
         <div style="text-align: right;">
@@ -526,18 +876,32 @@ if run_verification:
     if not imgref or not imgprobe:
         st.error("⚠️ Please upload both reference and probe images")
     else:
+        ref_bytes = imgref.read()
+        probe_bytes = imgprobe.read()
+
+        # Separate, non-blocking evidence locker: never affects verification path.
+        try:
+            save_evidence_pair(
+                ref_bytes=ref_bytes,
+                ref_name=getattr(imgref, "name", "reference.jpg"),
+                probe_bytes=probe_bytes,
+                probe_name=getattr(imgprobe, "name", "probe.jpg"),
+                session_id=st.session_state.session_id,
+            )
+        except Exception:
+            logger.warning("Evidence locker save failed; continuing verification", exc_info=True)
+
         # Save temporary files
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f1, \
              tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f2:
-            f1.write(imgref.read())
-            f2.write(imgprobe.read())
+            f1.write(ref_bytes)
+            f2.write(probe_bytes)
             ref_path, probe_path = f1.name, f2.name
         
         try:
             # Verification Progress
             progress_placeholder = st.empty()
             status_placeholder = st.empty()
-            log_placeholder = st.empty()
             
             # Progress bar container
             with progress_placeholder.container():
@@ -574,8 +938,9 @@ if run_verification:
             try:
                 fusion_eng = get_fusion_engine()
                 fusion_result = fusion_eng.verify(ref_path, probe_path, result)
-            except Exception as _fe:
-                pass   # fusion failure never breaks core result
+            except Exception:
+                logger.warning("Fusion engine failed; falling back to core result", exc_info=True)
+                fusion_result = None
 
             update_progress(85, "Computing", "Calculating similarity metrics...")
 
@@ -585,7 +950,8 @@ if run_verification:
                 e1u = occengine.embed_upper_face(ref_path)
                 e2u = occengine.embed_upper_face(probe_path)
                 occsim = cosine_sim(e1u, e2u)
-            except:
+            except Exception:
+                logger.warning("Occlusion metric failed; continuing without it", exc_info=True)
                 occsim = None
 
             update_progress(100, "Complete", "Verification finished")
@@ -808,13 +1174,23 @@ if run_verification:
             
         finally:
             # Cleanup
-            try:
-                os.unlink(ref_path)
-                os.unlink(probe_path)
-            except:
-                pass
+            for path in (ref_path, probe_path):
+                try:
+                    if path and os.path.exists(path):
+                        os.unlink(path)
+                except OSError:
+                    logger.warning("Failed to delete temporary file: %s", path, exc_info=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
+
+# Persist minimal session state for crash/reload resilience.
+recovery.save_session_state(
+    {
+        "verification_history": st.session_state.verification_history,
+        "session_id": st.session_state.session_id,
+        "audit_log": st.session_state.audit_log,
+    }
+)
 
 # =============================================================================
 # Recent Activity

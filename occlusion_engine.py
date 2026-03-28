@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 from insightface.app import FaceAnalysis
+from logger import LogManager
+
+logger = LogManager.get_logger("occlusion_engine")
 
 class OcclusionEngine:
     """
@@ -9,7 +12,7 @@ class OcclusionEngine:
     """
 
     def __init__(self, providers=None):
-        print("OcclusionEngine initialized") 
+        logger.info("OcclusionEngine initialized")
         if providers is None:
             providers = ["CPUExecutionProvider"]
 
@@ -42,4 +45,3 @@ def cosine_sim(a, b) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return float(np.dot(a, b) / (na * nb))
-

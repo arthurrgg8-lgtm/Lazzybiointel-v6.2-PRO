@@ -70,3 +70,12 @@ build/
 .env.*
 secrets.py
 config_local.py
+
+# --- Large binary files ---
+*.so
+*.dylib
+*.dll
+*.bin
+
+# --- Local evidence store ---
+evidence_locker/
